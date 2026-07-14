@@ -8,7 +8,8 @@
  *   DISCORD_CHANNEL_ID  … 取り込み対象チャンネルの ID
  *   MAX_HISTORY         … 初回に遡る最大件数 (任意, 既定 800)
  *
- * メッセージ書式:  1行目 = 国名 / 2行目以降 = コメント / 画像を1枚以上添付
+ * メッセージ書式:  1行目 = 「国名 / 料理名」 / 2行目以降 = コメント / 画像を1枚以上添付
+ *                  (区切りは / ／ | ｜。料理名・コメントは省略可。日付は投稿日時から自動)
  *
  * 依存パッケージなし。Node 18+ (グローバル fetch) で動作。
  */
@@ -191,9 +192,13 @@ async function main() {
     const att = pickImage(msg);
     if (!att) { skipped++; continue; } // 写真必須
 
-    const lines = (msg.content || "").split(/\r?\n/).map((l) => l.trim());
-    const countryRaw = lines[0] || "";
+    const lines = (msg.content || "").split(/\r?\n/);
+    const firstLine = (lines[0] || "").trim();
     const comment = lines.slice(1).join("\n").trim();
+    // 1行目を最初の区切り( / ／ | ｜ )で「国名」「料理名」に分割
+    let countryRaw = firstLine, dish = "";
+    const sep = firstLine.match(/^(.*?)\s*[\/／|｜]\s*(.+)$/);
+    if (sep) { countryRaw = sep[1].trim(); dish = sep[2].trim(); }
     const code = resolve(countryRaw);
     if (!code) {
       unresolved++;
@@ -211,6 +216,7 @@ async function main() {
       id: msg.id,
       code: code,
       country: code ? countries[code].ja : countryRaw,
+      dish,
       comment,
       image,
       date: msg.timestamp, // ISO8601
@@ -218,7 +224,8 @@ async function main() {
     });
     existingIds.add(msg.id);
     added++;
-    console.log(`  ＋ ${code || "??"} ${code ? countries[code].ja : countryRaw} — ${comment.slice(0, 24)}`);
+    const label = dish || comment.slice(0, 24) || "(コメントなし)";
+    console.log(`  ＋ ${code || "??"} ${code ? countries[code].ja : countryRaw} — ${label}`);
   }
 
   // 昇順で安定保存

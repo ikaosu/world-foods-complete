@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>🍽️ 世界食べ歩き地図</title>
-  <meta name="description" content="世界中、すべての国の料理を食べる企画。食べた国が地図に色づいていきます。" />
+  <title>🍽️ 世界料理制覇マップ</title>
+  <meta name="description" content="世界すべての国の料理を食べる企画。現地でも日本でも、食べた国から世界地図が色づいていきます。" />
 
   <!-- jsVectorMap (choropleth world map) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/css/jsvectormap.min.css" />
@@ -13,17 +13,18 @@
 <body>
   <header class="site-header">
     <div class="wrap">
-      <h1>🍽️ 世界食べ歩き地図</h1>
-      <p class="tagline">世界、すべての国の料理を食べる。食べた国から地図が色づく。</p>
+      <h1>🍽️ 世界料理制覇マップ</h1>
+      <p class="tagline">世界すべての国の料理を食べる企画。<br class="tagline-br" />
+        現地に行かなくてもOK — 日本でもどこでも、その国の料理を食べたら地図が色づく。</p>
 
       <div class="stats" id="stats">
         <div class="stat">
           <span class="stat-num" id="stat-countries">–</span>
-          <span class="stat-label">制覇した国</span>
+          <span class="stat-label">食べた国</span>
         </div>
         <div class="stat">
           <span class="stat-num" id="stat-percent">–</span>
-          <span class="stat-label">世界制覇率</span>
+          <span class="stat-label">制覇率</span>
         </div>
         <div class="stat">
           <span class="stat-num" id="stat-dishes">–</span>
@@ -41,10 +42,24 @@
     <section class="map-section">
       <div id="map" role="img" aria-label="世界地図。訪問した国が色づいています。"></div>
       <div class="legend">
-        <span class="legend-item"><i class="sw sw-visited"></i>制覇済み</span>
-        <span class="legend-item"><i class="sw sw-unvisited"></i>未踏</span>
-        <span class="legend-hint">国をクリックすると写真とコメントが見られます</span>
+        <span class="legend-item"><i class="sw sw-visited"></i>食べた</span>
+        <span class="legend-item"><i class="sw sw-unvisited"></i>未食</span>
+        <span class="legend-hint">国をクリックすると、その国で食べた料理が見られます</span>
       </div>
+    </section>
+
+    <section class="search-section">
+      <h2>国をさがす</h2>
+      <div class="search-controls">
+        <input id="country-search" type="search" placeholder="国名で検索（例: フランス / Thailand / IT）" autocomplete="off" />
+        <div class="chips" id="filter-chips">
+          <button type="button" class="chip is-active" data-filter="all">すべて</button>
+          <button type="button" class="chip" data-filter="eaten">食べた</button>
+          <button type="button" class="chip" data-filter="todo">まだ</button>
+        </div>
+      </div>
+      <p class="search-summary" id="search-summary"></p>
+      <div class="search-results" id="search-results"></div>
     </section>
 
     <section class="feed-section">
@@ -55,9 +70,13 @@
     <section class="howto">
       <h2>投稿のしかた</h2>
       <p>Discord の投稿用チャンネルに <strong>写真</strong> を添付して、キャプションをこの形式で書くだけ:</p>
-      <pre class="howto-example">イタリア
-ローマの下町で食べた本場カルボナーラ。チーズが濃厚だった。</pre>
-      <p class="howto-note">1行目 = 国名（日本語・英語・2文字コードのいずれでもOK） / 2行目以降 = コメント。GitHub Action が定期的に取り込み、この地図が自動更新されます。</p>
+      <pre class="howto-example">イタリア / カルボナーラ
+ローマ風のお店で。黒胡椒が効いてて濃厚だった。</pre>
+      <p class="howto-note">
+        <strong>1行目</strong> = 国名 <code>/</code> 料理名（料理名は省略可）。国名は日本語・英語・2文字コードのいずれでもOK。<br />
+        <strong>2行目以降</strong> = コメント。<strong>日付</strong>は投稿日時から自動で入ります。<br />
+        現地に行く必要はありません。日本のお店やお取り寄せでその国の料理を食べたら、その国は「制覇」です。GitHub Action が定期的に取り込み、この地図が自動更新されます。
+      </p>
     </section>
   </main>
 

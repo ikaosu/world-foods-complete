@@ -97,6 +97,7 @@
 
     renderStats(byCode, posts);
     renderMap();
+    setupSearch();
     renderFeed(posts);
     renderFooter(posts);
     setupModal();
@@ -145,11 +146,11 @@
           const name = nameOf(code);
           if (list) {
             tooltip.text(
-              `<strong>${flagEmoji(code)} ${esc(name)}</strong><br>制覇済み・${list.length}品`,
+              `<strong>${flagEmoji(code)} ${esc(name)}</strong><br>食べた・${list.length}品`,
               true
             );
           } else {
-            tooltip.text(`${esc(name)}<br><span style="opacity:.7">まだ未踏</span>`, true);
+            tooltip.text(`${esc(name)}<br><span style="opacity:.7">未食</span>`, true);
           }
         },
         onRegionClick(event, code) {
@@ -190,13 +191,18 @@
       .slice(0, 24)
       .map((p) => {
         const name = p.country || nameOf(p.code);
+        const flag = flagEmoji(p.code);
+        const title = p.dish ? esc(p.dish) : `${flag} ${esc(name)}`;
+        const meta = p.dish
+          ? `<span class="card-flag">${flag}</span>${esc(name)} ・ ${fmtDate(p.date)}`
+          : fmtDate(p.date);
         return `
         <article class="card" data-code="${esc(p.code || "")}" tabindex="0">
           ${mediaHTML(p, "card-img")}
           <div class="card-body">
-            <div class="card-country"><span class="card-flag">${flagEmoji(p.code)}</span>${esc(name)}</div>
-            <p class="card-comment">${esc(p.comment) || "<em>（コメントなし）</em>"}</p>
-            <div class="card-date">${fmtDate(p.date)}</div>
+            <div class="card-dish">${title}</div>
+            <div class="card-meta">${meta}</div>
+            ${p.comment ? `<p class="card-comment">${esc(p.comment)}</p>` : ""}
           </div>
         </article>`;
       })
@@ -217,6 +223,153 @@
     });
   }
 
+  // ---- 国さがし（検索） ----------------------------------------------
+  const search = { q: "", filter: "all", rows: [] };
+
+  function buildCountryRows() {
+    const rows = [];
+    for (const [code, c] of Object.entries(state.countries)) {
+      const list = state.byCode.get(code);
+      rows.push({
+        code,
+        ja: c.ja || code,
+        en: c.en || "",
+        un: !!c.un,
+        alt: c.alt || [],
+        count: list ? list.length : 0,
+      });
+    }
+    return rows;
+  }
+
+  function rowHTML(r) {
+    const eaten = r.count > 0;
+    const status = eaten ? `食べた・${r.count}品` : "未食";
+    return `<button type="button" class="srow ${eaten ? "srow-eaten" : ""}" data-code="${r.code}" data-eaten="${eaten ? 1 : 0}">
+      <span class="srow-flag">${flagEmoji(r.code)}</span>
+      <span class="srow-name">${esc(r.ja)}<span class="srow-en">${esc(r.en)}</span></span>
+      <span class="srow-status ${eaten ? "st-eaten" : "st-todo"}">${status}</span>
+    </button>`;
+  }
+
+  function renderSearchResults() {
+    const resultsEl = $("#search-results");
+    const summaryEl = $("#search-summary");
+    const q = search.q.trim().toLowerCase();
+
+    let rows = search.rows;
+    if (search.filter === "eaten") rows = rows.filter((r) => r.count > 0);
+    else if (search.filter === "todo") rows = rows.filter((r) => r.count === 0 && r.un);
+
+    if (q) {
+      rows = rows.filter(
+        (r) =>
+          r.ja.toLowerCase().includes(q) ||
+          r.en.toLowerCase().includes(q) ||
+          r.code.toLowerCase() === q ||
+          r.alt.some((a) => String(a).toLowerCase().includes(q))
+      );
+    }
+    rows = rows.slice().sort((a, b) => b.count - a.count || a.ja.localeCompare(b.ja, "ja"));
+
+    const eatenTotal = search.rows.filter((r) => r.count > 0).length;
+    summaryEl.textContent = `食べた ${eatenTotal} カ国 ／ 全 ${WORLD_COUNT} カ国`;
+
+    // 既定表示（未検索・すべて）は「食べた国」だけ。250件のダンプを避ける
+    let note = "";
+    if (!q && search.filter === "all") {
+      const eatenRows = rows.filter((r) => r.count > 0);
+      if (eatenRows.length) {
+        rows = eatenRows;
+        note = `<p class="search-note">検索ボックスに入力すると、まだ食べていない国も探せます。</p>`;
+      }
+    }
+
+    const CAP = 80;
+    const shown = rows.slice(0, CAP);
+    const more = rows.length - shown.length;
+
+    resultsEl.innerHTML =
+      (shown.length ? shown.map(rowHTML).join("") : `<p class="search-empty">該当する国がありません。</p>`) +
+      (more > 0 ? `<p class="search-more">ほか ${more} カ国…（国名で絞り込んでください）</p>` : "") +
+      note;
+
+    resultsEl.querySelectorAll(".srow").forEach((el) => {
+      el.addEventListener("click", () => {
+        const code = el.getAttribute("data-code");
+        const eaten = el.getAttribute("data-eaten") === "1";
+        if (eaten) {
+          const list = state.byCode.get(code);
+          if (list) openModal(code, list, nameOf(code));
+        } else {
+          highlightRegion(code);
+          toast(`${flagEmoji(code)} ${nameOf(code)} はまだ食べていません`);
+        }
+      });
+    });
+  }
+
+  function setupSearch() {
+    search.rows = buildCountryRows();
+    const input = $("#country-search");
+    const chips = $("#filter-chips");
+
+    const params = new URLSearchParams(location.search);
+    if (params.get("q")) { search.q = params.get("q"); input.value = search.q; }
+    const f = params.get("filter");
+    if (f && ["all", "eaten", "todo"].includes(f)) search.filter = f;
+
+    const applyChipUI = () =>
+      chips.querySelectorAll(".chip").forEach((c) =>
+        c.classList.toggle("is-active", c.getAttribute("data-filter") === search.filter)
+      );
+    applyChipUI();
+
+    input.addEventListener("input", () => { search.q = input.value; renderSearchResults(); });
+    chips.querySelectorAll(".chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        search.filter = chip.getAttribute("data-filter");
+        applyChipUI();
+        renderSearchResults();
+      });
+    });
+    renderSearchResults();
+  }
+
+  // 地図上で該当国を一時的にハイライト（点滅）し、地図までスクロール
+  function highlightRegion(code) {
+    if (!mapInstance || !mapInstance.regions || !mapInstance.regions[code]) return;
+    const el = mapInstance.regions[code].element;
+    if (!el || !el.setStyle) return;
+    document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "center" });
+    const list = state.byCode.get(code);
+    const resting = list ? fillFor(list.length) : getCSS("--map-unvisited");
+    el.setStyle("fill", "#ffcf33");
+    el.setStyle("stroke", "#b8340a");
+    el.setStyle("stroke-width", 1.6);
+    setTimeout(() => {
+      el.setStyle("fill", resting);
+      el.setStyle("stroke", getCSS("--map-stroke"));
+      el.setStyle("stroke-width", 0.6);
+    }, 1700);
+  }
+
+  // ---- トースト -------------------------------------------------------
+  let toastTimer = null;
+  function toast(msg) {
+    let el = document.getElementById("toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "toast";
+      el.className = "toast";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 2400);
+  }
+
   // ---- モーダル -------------------------------------------------------
   function openModal(code, list, name) {
     const sorted = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -227,7 +380,8 @@
         (p) => `
       <div class="mpost">
         ${mediaHTML(p, "")}
-        <p class="mpost-comment">${esc(p.comment) || "<em>（コメントなし）</em>"}</p>
+        ${p.dish ? `<div class="mpost-dish">${esc(p.dish)}</div>` : ""}
+        ${p.comment ? `<p class="mpost-comment">${esc(p.comment)}</p>` : ""}
         <div class="mpost-date">${fmtDate(p.date)}</div>
       </div>`
       )
@@ -251,7 +405,7 @@
   // ---- フッター / テーマ ---------------------------------------------
   function renderFooter(posts) {
     const latest = posts.map((p) => p.date).filter(Boolean).sort().pop();
-    $("#footer-updated").textContent = latest ? `最終更新: ${fmtDate(latest)}` : "世界食べ歩き地図";
+    $("#footer-updated").textContent = latest ? `最終更新: ${fmtDate(latest)}` : "世界料理制覇マップ";
   }
 
   let themeWired = false;
