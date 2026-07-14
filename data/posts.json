@@ -1,0 +1,29 @@
+[
+  {
+    "id": "sample-1",
+    "code": "JP",
+    "country": "日本",
+    "comment": "（サンプル）地元の定食屋で焼き魚定食。ここが世界制覇のスタート地点。",
+    "image": "images/sample-jp.svg",
+    "date": "2026-07-01T12:00:00.000Z",
+    "source": "seed"
+  },
+  {
+    "id": "sample-2",
+    "code": "IT",
+    "country": "イタリア",
+    "comment": "（サンプル）ローマ下町のトラットリアで本場カルボナーラ。黒胡椒が効いてる。",
+    "image": "images/sample-it.svg",
+    "date": "2026-07-05T19:30:00.000Z",
+    "source": "seed"
+  },
+  {
+    "id": "sample-3",
+    "code": "TH",
+    "country": "タイ",
+    "comment": "（サンプル）屋台のガパオライス。目玉焼きを崩して混ぜるのが正解だった。",
+    "image": "images/sample-th.svg",
+    "date": "2026-07-10T13:15:00.000Z",
+    "source": "seed"
+  }
+]

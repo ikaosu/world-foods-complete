@@ -1,0 +1,43 @@
+name: Sync from Discord
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # 15分ごと (GitHub の都合で多少遅延あり)
+  workflow_dispatch:          # 手動トリガーも可
+
+# 直前の実行が走っている間は重ねない
+concurrency:
+  group: discord-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch new posts from Discord
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+        run: node scripts/sync-discord.mjs
+
+      - name: Commit & push if changed
+        run: |
+          if [ -n "$(git status --porcelain data images)" ]; then
+            git config user.name  "world-food-map bot"
+            git config user.email "actions@github.com"
+            git add data images
+            git commit -m "sync: import posts from Discord"
+            git push
+            echo "pushed changes"
+          else
+            echo "no changes"
+          fi

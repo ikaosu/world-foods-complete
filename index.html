@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🍽️ 世界食べ歩き地図</title>
+  <meta name="description" content="世界中、すべての国の料理を食べる企画。食べた国が地図に色づいていきます。" />
+
+  <!-- jsVectorMap (choropleth world map) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/css/jsvectormap.min.css" />
+  <link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <h1>🍽️ 世界食べ歩き地図</h1>
+      <p class="tagline">世界、すべての国の料理を食べる。食べた国から地図が色づく。</p>
+
+      <div class="stats" id="stats">
+        <div class="stat">
+          <span class="stat-num" id="stat-countries">–</span>
+          <span class="stat-label">制覇した国</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num" id="stat-percent">–</span>
+          <span class="stat-label">世界制覇率</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num" id="stat-dishes">–</span>
+          <span class="stat-label">食べた料理</span>
+        </div>
+      </div>
+
+      <div class="progress" title="世界制覇の進捗">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="map-section">
+      <div id="map" role="img" aria-label="世界地図。訪問した国が色づいています。"></div>
+      <div class="legend">
+        <span class="legend-item"><i class="sw sw-visited"></i>制覇済み</span>
+        <span class="legend-item"><i class="sw sw-unvisited"></i>未踏</span>
+        <span class="legend-hint">国をクリックすると写真とコメントが見られます</span>
+      </div>
+    </section>
+
+    <section class="feed-section">
+      <h2>最近食べたもの</h2>
+      <div class="feed" id="feed"><!-- posts injected here --></div>
+    </section>
+
+    <section class="howto">
+      <h2>投稿のしかた</h2>
+      <p>Discord の投稿用チャンネルに <strong>写真</strong> を添付して、キャプションをこの形式で書くだけ:</p>
+      <pre class="howto-example">イタリア
+ローマの下町で食べた本場カルボナーラ。チーズが濃厚だった。</pre>
+      <p class="howto-note">1行目 = 国名（日本語・英語・2文字コードのいずれでもOK） / 2行目以降 = コメント。GitHub Action が定期的に取り込み、この地図が自動更新されます。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span id="footer-updated"></span>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="配色を切り替え">🌓 表示切替</button>
+    </div>
+  </footer>
+
+  <!-- Post detail modal -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="modal-close" id="modal-close" aria-label="閉じる">×</button>
+      <h3 id="modal-title"></h3>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/js/jsvectormap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/maps/world.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>

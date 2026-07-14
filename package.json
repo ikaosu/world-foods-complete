@@ -1,0 +1,12 @@
+{
+  "name": "world-food-map",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "世界、すべての国の料理を食べる企画の記録サイト（Discord自動投稿対応）",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "sync": "node scripts/sync-discord.mjs",
+    "serve": "npx --yes serve ."
+  }
+}
