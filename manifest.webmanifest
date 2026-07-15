@@ -1,0 +1,16 @@
+{
+  "name": "世界料理制覇マップ",
+  "short_name": "料理制覇",
+  "description": "世界すべての国の料理を、ぜんぶ食べる。食べた国から世界地図が色づいていく。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f8f4ed",
+  "theme_color": "#b06a4e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

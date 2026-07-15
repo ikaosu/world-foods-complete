@@ -6,9 +6,19 @@
   <title>🍽️ 世界料理制覇マップ</title>
   <meta name="description" content="世界すべての国の料理を、ぜんぶ食べる企画。食べた国から世界地図が色づいていきます。" />
 
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#b06a4e" />
+  <link rel="icon" href="icons/favicon.png" sizes="48x48" type="image/png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="料理制覇" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
   <!-- jsVectorMap (choropleth world map) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/css/jsvectormap.min.css" />
-  <link rel="stylesheet" href="assets/styles.css?v=5" />
+  <link rel="stylesheet" href="assets/styles.css?v=6" />
 </head>
 <body>
   <header class="site-header">
@@ -86,7 +96,12 @@
 
   <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/js/jsvectormap.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/maps/world.js"></script>
-  <script src="assets/app.js?v=5"></script>
-  <script src="assets/post.js?v=5"></script>
+  <script src="assets/app.js?v=6"></script>
+  <script src="assets/post.js?v=6"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    }
+  </script>
 </body>
 </html>

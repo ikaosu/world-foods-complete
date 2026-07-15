@@ -126,6 +126,18 @@
         state.posts.push(post);
         renderAll();
       },
+      updatePostLive(post) {
+        if (!post || !post.id) return;
+        const i = state.posts.findIndex((p) => p.id === post.id);
+        if (i >= 0) state.posts[i] = post;
+        else state.posts.push(post);
+        renderAll();
+      },
+      removePostLive(id) {
+        const before = state.posts.length;
+        state.posts = state.posts.filter((p) => p.id !== id);
+        if (state.posts.length !== before) renderAll();
+      },
     };
     document.dispatchEvent(new Event("wfm:ready"));
   }
@@ -227,7 +239,7 @@
     const feed = $("#feed");
     const posts = state.posts;
     if (!posts.length) {
-      feed.innerHTML = `<p class="feed-empty">まだ投稿がありません。右下の「＋ 投稿」または Discord から追加できます。</p>`;
+      feed.innerHTML = `<p class="feed-empty">まだ投稿がありません。</p>`;
       return;
     }
     const sorted = [...posts].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -422,6 +434,7 @@
     const sorted = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     $("#modal-title").innerHTML =
       `${flagEmoji(code)} ${esc(name)} <span style="font-size:.7em;color:var(--ink-soft)">・${list.length}品</span>`;
+    const admin = !!(window.WFMPost && window.WFMPost.isAdmin && window.WFMPost.isAdmin());
     $("#modal-body").innerHTML = sorted
       .map(
         (p) => `
@@ -430,9 +443,19 @@
         ${p.dish ? `<div class="mpost-dish">${esc(p.dish)}</div>` : ""}
         ${p.comment ? `<p class="mpost-comment">${esc(p.comment)}</p>` : ""}
         <div class="mpost-date">${fmtDate(p.date)}</div>
+        ${admin ? `<div class="mpost-actions"><button type="button" class="mpost-btn mpost-edit">編集</button><button type="button" class="mpost-btn mpost-del">削除</button></div>` : ""}
       </div>`
       )
       .join("");
+    if (admin) {
+      $("#modal-body").querySelectorAll(".mpost").forEach((el, i) => {
+        const p = sorted[i];
+        const eb = el.querySelector(".mpost-edit");
+        const db = el.querySelector(".mpost-del");
+        if (eb) eb.addEventListener("click", () => window.WFMPost.editPost(p));
+        if (db) db.addEventListener("click", () => window.WFMPost.deletePost(p));
+      });
+    }
     const modal = $("#modal");
     modal.hidden = false;
     document.body.style.overflow = "hidden";

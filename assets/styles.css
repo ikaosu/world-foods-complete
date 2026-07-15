@@ -261,6 +261,17 @@ body {
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px;
 }
 .pf-hint { margin: 0 0 2px; font-size: .78rem; color: var(--ink-soft); line-height: 1.5; }
+.pf-status { font-size: .82rem; color: var(--brand-deep); min-height: 1.1em; font-weight: 700; }
+.pf-danger { color: #a83232 !important; text-align: left; margin-top: 4px; }
+
+/* 投稿の編集・削除（管理者） */
+.mpost-actions { display: flex; gap: 8px; margin-top: 4px; }
+.mpost-btn {
+  font: inherit; font-size: .8rem; cursor: pointer; padding: 5px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+}
+.mpost-btn:hover { border-color: var(--brand); color: var(--brand); }
+.mpost-del:hover { border-color: #a83232; color: #a83232; }
 
 /* ---- Modal ---- */
 .modal-backdrop {

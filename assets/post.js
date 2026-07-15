@@ -1,23 +1,28 @@
-/* 世界料理制覇マップ — サイトからの投稿モジュール
+/* 世界料理制覇マップ — 投稿/編集/削除モジュール（管理者のみ）
  *
- * GitHub Pages（バックエンドなし）で投稿を実現するため、
- * ブラウザから GitHub Contents API で直接コミットする。
- *  - 画像を images/ に PUT（アップ前にリサイズ）
- *  - data/posts.json を GET→追記→PUT
- * トークンはコードに埋め込まず、この端末の localStorage にのみ保存する
- * （＝公開サイトのソースには出ないので、閲覧者は投稿できない）。
+ * GitHub Contents API でブラウザから直接コミットする。
+ * 管理者モード（localStorage: wfm-admin）のときだけ投稿UIを表示するので、
+ * 一般の閲覧者には「＋投稿」ボタンも GitHub 設定も見えない。
+ * 管理者モードは URL に #admin を付けて一度開くと、その端末で有効になる。
+ * トークンはコードに埋め込まず、この端末の localStorage にのみ保存する。
  */
 (function () {
   "use strict";
 
-  const CFG_KEY = "wfm-gh"; // { owner, repo, branch, token }
+  const CFG_KEY = "wfm-gh";      // { owner, repo, branch, token }
+  const ADMIN_KEY = "wfm-admin"; // "1" で管理者
+  const HEIC_LIB = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
   const $ = (s, r = document) => r.querySelector(s);
+
+  // ---- 管理者モード ---------------------------------------------------
+  function isAdmin() { return localStorage.getItem(ADMIN_KEY) === "1"; }
+  function enableAdmin() { localStorage.setItem(ADMIN_KEY, "1"); }
+  function disableAdmin() { localStorage.removeItem(ADMIN_KEY); localStorage.removeItem(CFG_KEY); }
 
   // ---- 設定（localStorage） ------------------------------------------
   function loadCfg() {
     let c = {};
     try { c = JSON.parse(localStorage.getItem(CFG_KEY) || "{}"); } catch (e) { /* noop */ }
-    // github.io ホストなら owner / repo を自動推定
     if ((!c.owner || !c.repo) && /\.github\.io$/.test(location.hostname)) {
       c.owner = c.owner || location.hostname.split(".")[0];
       const seg = location.pathname.split("/").filter(Boolean)[0];
@@ -28,13 +33,11 @@
   }
   function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
 
-  // ---- base64 / UTF-8 変換 -------------------------------------------
+  // ---- base64 / UTF-8 ------------------------------------------------
   function bytesToB64(bytes) {
     let bin = "";
     const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
+    for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
     return btoa(bin);
   }
   function b64ToBytes(b64) {
@@ -46,7 +49,7 @@
   const utf8ToB64 = (str) => bytesToB64(new TextEncoder().encode(str));
   const b64ToUtf8 = (b64) => new TextDecoder().decode(b64ToBytes(b64));
 
-  // ---- 画像デコード & リサイズ ---------------------------------------
+  // ---- 画像デコード & リサイズ（検証済み） ---------------------------
   function loadScriptOnce(src, globalName) {
     if (window[globalName]) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -57,7 +60,6 @@
       document.head.appendChild(s);
     });
   }
-  // 拡張子/MIME だけでなく中身のマジックバイトでも HEIC/HEIF を判定
   async function looksLikeHeic(file) {
     if (/image\/hei[cf]/i.test(file.type || "")) return true;
     if (/\.(heic|heif)$/i.test(file.name || "")) return true;
@@ -71,8 +73,8 @@
     return false;
   }
   async function heicToJpeg(file) {
-    await loadScriptOnce("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js", "heic2any");
-    const out = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.92 });
+    await withTimeout(loadScriptOnce(HEIC_LIB, "heic2any"), 60000, "変換ライブラリの読み込み");
+    const out = await withTimeout(window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.92 }), 90000, "画像の変換");
     return Array.isArray(out) ? out[0] : out;
   }
   async function decodeImage(blob) {
@@ -87,17 +89,14 @@
       img.src = url;
     });
   }
-  // どんなスマホ写真でも通す: 判定→変換→デコード、失敗しても変換して再挑戦
   async function resizeImage(file, maxDim = 1600, quality = 0.85) {
-    let blob = file;
-    let src = null;
+    let blob = file, src = null;
     if (await looksLikeHeic(file)) {
-      try { blob = await heicToJpeg(file); } catch (e) { blob = file; /* 後段で再挑戦 */ }
+      try { blob = await heicToJpeg(file); } catch (e) { blob = file; }
     }
     try {
       src = await decodeImage(blob);
     } catch (e) {
-      // 未検出の HEIC/HEIF かもしれないので変換して最後にもう一度
       if (blob === file) {
         try { blob = await heicToJpeg(file); src = await decodeImage(blob); }
         catch (e2) { throw Object.assign(new Error("decode failed: " + (e2.message || e2)), { code: "IMAGE_DECODE" }); }
@@ -120,38 +119,68 @@
     return new Uint8Array(await outBlob.arrayBuffer());
   }
 
+  // ---- タイムアウト --------------------------------------------------
+  function withTimeout(promise, ms, label) {
+    let t;
+    const to = new Promise((_, rej) => { t = setTimeout(() => rej(new Error((label || "処理") + "がタイムアウトしました")), ms); });
+    return Promise.race([promise, to]).finally(() => clearTimeout(t));
+  }
+  async function fetchT(url, opts, ms) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms || 45000);
+    try { return await fetch(url, Object.assign({}, opts, { signal: ctrl.signal })); }
+    finally { clearTimeout(t); }
+  }
+
   // ---- GitHub API ----------------------------------------------------
   function ghHeaders(cfg) {
     return { Authorization: `Bearer ${cfg.token}`, Accept: "application/vnd.github+json" };
   }
   async function ghGet(cfg, path) {
     const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${path}?ref=${cfg.branch}`;
-    const res = await fetch(url, { headers: ghHeaders(cfg), cache: "no-store" });
+    const res = await fetchT(url, { headers: ghHeaders(cfg), cache: "no-store" });
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+    if (!res.ok) throw ghErr(res, `GET ${path}`);
     return res.json();
   }
   async function ghPut(cfg, path, contentB64, message, sha) {
     const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${path}`;
     const body = { message, content: contentB64, branch: cfg.branch };
     if (sha) body.sha = sha;
-    const res = await fetch(url, {
+    const res = await fetchT(url, {
       method: "PUT",
-      headers: { ...ghHeaders(cfg), "Content-Type": "application/json" },
+      headers: Object.assign(ghHeaders(cfg), { "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
-    if (!res.ok) {
-      let detail = "";
-      try { detail = (await res.json()).message || ""; } catch (e) { /* noop */ }
-      const err = new Error(`PUT ${path} → ${res.status} ${detail}`);
-      err.status = res.status;
-      throw err;
-    }
+    if (!res.ok) throw await ghErrAsync(res, `PUT ${path}`);
     return res.json();
   }
+  async function ghDelete(cfg, path) {
+    const cur = await ghGet(cfg, path);
+    if (!cur || !cur.sha) return;
+    const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${path}`;
+    const res = await fetchT(url, {
+      method: "DELETE",
+      headers: Object.assign(ghHeaders(cfg), { "Content-Type": "application/json" }),
+      body: JSON.stringify({ message: `delete ${path}`, sha: cur.sha, branch: cfg.branch }),
+    });
+    if (!res.ok) throw await ghErrAsync(res, `DELETE ${path}`);
+  }
+  function ghErr(res, label) {
+    const e = new Error(`${label} → ${res.status}`);
+    e.status = res.status;
+    return e;
+  }
+  async function ghErrAsync(res, label) {
+    let detail = "";
+    try { detail = (await res.json()).message || ""; } catch (e) { /* noop */ }
+    const e = new Error(`${label} → ${res.status} ${detail}`);
+    e.status = res.status;
+    return e;
+  }
 
-  // posts.json を GET→追記→PUT（sha 競合時は1回だけ再試行）
-  async function appendPost(cfg, post, attempt = 0) {
+  // posts.json を GET→反映→PUT（作成・編集の両対応、sha競合は1回再試行）
+  async function upsertPost(cfg, post, attempt = 0) {
     const cur = await ghGet(cfg, "data/posts.json");
     let posts = [];
     let sha;
@@ -159,24 +188,41 @@
       try { posts = JSON.parse(b64ToUtf8(cur.content)); } catch (e) { posts = []; }
       sha = cur.sha;
     }
-    if (!posts.some((p) => p.id === post.id)) posts.push(post);
+    const i = posts.findIndex((p) => p.id === post.id);
+    if (i >= 0) posts[i] = post; else posts.push(post);
     posts.sort((a, b) => (a.date || "").localeCompare(b.date || "") || String(a.id).localeCompare(String(b.id)));
-    const content = utf8ToB64(JSON.stringify(posts, null, 2) + "\n");
     try {
-      await ghPut(cfg, "data/posts.json", content, `post: ${post.country}${post.dish ? " / " + post.dish : ""}`, sha);
+      await ghPut(cfg, "data/posts.json", utf8ToB64(JSON.stringify(posts, null, 2) + "\n"),
+        `post: ${post.country}${post.dish ? " / " + post.dish : ""}`, sha);
     } catch (e) {
-      if (e.status === 409 && attempt < 1) return appendPost(cfg, post, attempt + 1);
+      if (e.status === 409 && attempt < 2) return upsertPost(cfg, post, attempt + 1);
+      throw e;
+    }
+  }
+  async function removePost(cfg, id, attempt = 0) {
+    const cur = await ghGet(cfg, "data/posts.json");
+    if (!cur || !cur.content) return;
+    let posts = [];
+    try { posts = JSON.parse(b64ToUtf8(cur.content)); } catch (e) { posts = []; }
+    const next = posts.filter((p) => p.id !== id);
+    try {
+      await ghPut(cfg, "data/posts.json", utf8ToB64(JSON.stringify(next, null, 2) + "\n"), `delete post ${id}`, cur.sha);
+    } catch (e) {
+      if (e.status === 409 && attempt < 2) return removePost(cfg, id, attempt + 1);
       throw e;
     }
   }
 
-  // ---- UI 構築 --------------------------------------------------------
+  // ---- UI 構築（管理者のみ） -----------------------------------------
+  let pickedFile = null;
+  let editingPost = null;
+
   function buildUI() {
     const fab = document.createElement("button");
     fab.id = "fab-post";
     fab.className = "fab";
     fab.type = "button";
-    fab.innerHTML = "＋ 投稿";
+    fab.textContent = "＋ 投稿";
     document.body.appendChild(fab);
 
     const wrap = document.createElement("div");
@@ -184,7 +230,7 @@
       <div class="modal-backdrop" id="post-modal" hidden>
         <div class="modal post-modal">
           <button class="modal-close" id="post-close" aria-label="閉じる">×</button>
-          <h3>料理を投稿</h3>
+          <h3 id="pf-title">料理を投稿</h3>
           <form id="post-form" autocomplete="off">
             <input type="file" id="pf-photo" accept="image/*" hidden />
             <button type="button" class="pf-drop" id="pf-drop"><span>📷 写真を選ぶ</span></button>
@@ -193,57 +239,53 @@
             <div class="pf-resolved" id="pf-resolved"></div>
             <input id="pf-dish" placeholder="料理名（例: カルボナーラ）" />
             <textarea id="pf-comment" rows="3" placeholder="コメント（任意）"></textarea>
+            <div class="pf-status" id="pf-status" aria-live="polite"></div>
             <div class="pf-actions">
-              <button type="button" id="pf-settings-toggle" class="pf-link">⚙ GitHub設定</button>
+              <button type="button" id="pf-settings-toggle" class="pf-link">⚙ 設定</button>
               <button type="submit" id="pf-submit" class="pf-submit">投稿する</button>
             </div>
             <div class="pf-settings" id="pf-settings" hidden>
-              <p class="pf-hint">トークンはこの端末のブラウザにのみ保存されます。<br>
-                fine-grained PAT（対象リポジトリの <b>Contents: Read and write</b>）を推奨。</p>
+              <p class="pf-hint">トークンはこの端末にのみ保存されます。<br>
+                fine-grained PAT（対象リポジトリの <b>Contents: Read and write</b>）または classic の <b>repo</b> スコープ。</p>
               <input id="pf-owner" placeholder="GitHubユーザー名" />
               <input id="pf-repo" placeholder="リポジトリ名" />
               <input id="pf-branch" placeholder="ブランチ（既定 main）" />
-              <input id="pf-token" type="password" placeholder="アクセストークン (github_pat_... / ghp_...)" />
+              <input id="pf-token" type="password" placeholder="アクセストークン" />
               <button type="button" id="pf-save-settings" class="pf-submit pf-secondary">設定を保存</button>
+              <button type="button" id="pf-logout" class="pf-link pf-danger">この端末の管理者モードを解除</button>
             </div>
           </form>
         </div>
       </div>`;
     document.body.appendChild(wrap.firstElementChild);
-
     wireUI(fab);
   }
-
-  let pickedFile = null;
 
   function populateCountries() {
     const dl = $("#pf-countries");
     if (!dl || dl.childElementCount || !window.WFM) return;
     const countries = window.WFM.getCountries();
     const frag = document.createDocumentFragment();
-    for (const [code, c] of Object.entries(countries)) {
+    for (const [, c] of Object.entries(countries)) {
       const o = document.createElement("option");
       o.value = c.ja;
-      o.label = `${c.ja} (${c.en})`;
       frag.appendChild(o);
     }
     dl.appendChild(frag);
   }
 
+  function setStatus(msg) {
+    const el = $("#pf-status");
+    if (el) el.textContent = msg || "";
+  }
+
   function wireUI(fab) {
     const modal = $("#post-modal");
-    const open = () => {
-      populateCountries();
-      prefillSettings();
-      modal.hidden = false;
-      document.body.style.overflow = "hidden";
-    };
-    const close = () => { modal.hidden = true; document.body.style.overflow = ""; };
-    fab.addEventListener("click", open);
+    const close = () => { modal.hidden = true; document.body.style.overflow = ""; setStatus(""); };
+    fab.addEventListener("click", () => openPostModal(null));
     $("#post-close").addEventListener("click", close);
     modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
 
-    // 写真選択 + プレビュー
     const photoInput = $("#pf-photo");
     const drop = $("#pf-drop");
     drop.addEventListener("click", () => photoInput.click());
@@ -254,42 +296,52 @@
       const img = new Image();
       img.alt = "プレビュー";
       img.onload = () => { drop.innerHTML = ""; drop.appendChild(img); };
-      img.onerror = () => {
-        // HEIC等でプレビューできない場合もファイル自体は投稿時に変換される
-        drop.textContent = "✓ 選択済み（投稿時に変換）: " + pickedFile.name;
-      };
+      img.onerror = () => { drop.textContent = "✓ 選択済み（投稿時に変換）: " + pickedFile.name; };
       img.src = url;
     });
 
-    // 国名の解決プレビュー
     const countryInput = $("#pf-country");
     const resolved = $("#pf-resolved");
     countryInput.addEventListener("input", () => {
-      const code = window.WFM && window.WFM.resolveCountry(countryInput.value);
       if (!countryInput.value.trim()) { resolved.textContent = ""; return; }
+      const code = window.WFM && window.WFM.resolveCountry(countryInput.value);
       resolved.innerHTML = code
         ? `<span class="ok">${window.WFM.flagEmoji(code)} ${window.WFM.getCountries()[code].ja} として登録</span>`
         : `<span class="ng">国名を認識できません</span>`;
     });
 
-    // 設定
     $("#pf-settings-toggle").addEventListener("click", () => {
       const s = $("#pf-settings");
       s.hidden = !s.hidden;
     });
     $("#pf-save-settings").addEventListener("click", () => {
-      const cfg = {
+      saveCfg({
         owner: $("#pf-owner").value.trim(),
         repo: $("#pf-repo").value.trim(),
         branch: $("#pf-branch").value.trim() || "main",
         token: $("#pf-token").value.trim(),
-      };
-      saveCfg(cfg);
-      toast("GitHub設定を保存しました");
+      });
+      toast("設定を保存しました");
       $("#pf-settings").hidden = true;
+    });
+    $("#pf-logout").addEventListener("click", () => {
+      if (confirm("この端末の管理者モードを解除しますか？（保存したトークンも消えます）")) {
+        disableAdmin();
+        location.reload();
+      }
     });
 
     $("#post-form").addEventListener("submit", (e) => { e.preventDefault(); submitPost(close); });
+  }
+
+  function resetFormFields() {
+    pickedFile = null;
+    $("#pf-country").value = "";
+    $("#pf-dish").value = "";
+    $("#pf-comment").value = "";
+    $("#pf-resolved").textContent = "";
+    $("#pf-drop").innerHTML = "<span>📷 写真を選ぶ</span>";
+    const pi = $("#pf-photo"); if (pi) pi.value = "";
   }
 
   function prefillSettings() {
@@ -298,8 +350,29 @@
     if (!$("#pf-repo").value) $("#pf-repo").value = cfg.repo || "";
     if (!$("#pf-branch").value) $("#pf-branch").value = cfg.branch || "main";
     if (!$("#pf-token").value) $("#pf-token").value = cfg.token || "";
-    // 未設定なら設定を開いておく
     if (!cfg.token || !cfg.owner || !cfg.repo) $("#pf-settings").hidden = false;
+  }
+
+  function openPostModal(post) {
+    editingPost = post || null;
+    populateCountries();
+    prefillSettings();
+    $("#pf-title").textContent = editingPost ? "投稿を編集" : "料理を投稿";
+    $("#pf-submit").textContent = editingPost ? "更新する" : "投稿する";
+    setStatus("");
+    if (editingPost) {
+      resetFormFields();
+      $("#pf-country").value = editingPost.country || "";
+      $("#pf-dish").value = editingPost.dish || "";
+      $("#pf-comment").value = editingPost.comment || "";
+      $("#pf-country").dispatchEvent(new Event("input"));
+      const drop = $("#pf-drop");
+      if (editingPost.image) drop.innerHTML = `<img src="${editingPost.image}" alt="現在の写真" />`;
+    } else {
+      resetFormFields();
+    }
+    $("#post-modal").hidden = false;
+    document.body.style.overflow = "hidden";
   }
 
   function toast(msg) {
@@ -307,76 +380,130 @@
     else console.log(msg);
   }
 
-  // ---- 投稿実行 -------------------------------------------------------
-  async function submitPost(closeModal) {
+  function requireCfg() {
     const cfg = loadCfg();
-    // フォームの最新設定値も反映
-    cfg.owner = $("#pf-owner").value.trim() || cfg.owner;
-    cfg.repo = $("#pf-repo").value.trim() || cfg.repo;
-    cfg.branch = $("#pf-branch").value.trim() || cfg.branch || "main";
-    cfg.token = $("#pf-token").value.trim() || cfg.token;
-
+    cfg.owner = ($("#pf-owner") && $("#pf-owner").value.trim()) || cfg.owner;
+    cfg.repo = ($("#pf-repo") && $("#pf-repo").value.trim()) || cfg.repo;
+    cfg.branch = ($("#pf-branch") && $("#pf-branch").value.trim()) || cfg.branch || "main";
+    cfg.token = ($("#pf-token") && $("#pf-token").value.trim()) || cfg.token;
     if (!cfg.owner || !cfg.repo || !cfg.token) {
-      $("#pf-settings").hidden = false;
-      toast("先に GitHub 設定（ユーザー名・リポジトリ・トークン）を入力してください");
-      return;
+      if ($("#pf-settings")) $("#pf-settings").hidden = false;
+      toast("先に ⚙設定 で GitHub のユーザー名・リポジトリ・トークンを入力してください");
+      return null;
     }
-    if (!pickedFile) { toast("写真を選んでください"); return; }
+    saveCfg(cfg);
+    return cfg;
+  }
+
+  function errMsg(e) {
+    if (e && e.code === "IMAGE_DECODE") return "画像を読み込めませんでした。別の写真か JPEG/PNG でお試しください。";
+    let hint = "";
+    if (e && (e.status === 401 || e.status === 403)) hint = "（トークンの権限を確認）";
+    if (e && e.status === 404) hint = "（ユーザー名・リポジトリ名を確認）";
+    return String((e && e.message) || e).slice(0, 90) + hint;
+  }
+
+  // ---- 投稿（作成・編集） --------------------------------------------
+  async function submitPost(closeModal) {
+    const cfg = requireCfg();
+    if (!cfg) return;
+    if (!editingPost && !pickedFile) { toast("写真を選んでください"); return; }
     const code = window.WFM.resolveCountry($("#pf-country").value);
     if (!code) { toast("国名を認識できません（例: イタリア / Italy / IT）"); return; }
 
     const submitBtn = $("#pf-submit");
+    const origLabel = submitBtn.textContent;
     submitBtn.disabled = true;
-    submitBtn.textContent = "投稿中…";
     try {
-      const bytes = await resizeImage(pickedFile);
-      const id = `web-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      const imgPath = `images/${id}.jpg`;
       const country = window.WFM.getCountries()[code].ja;
+      const id = editingPost ? editingPost.id : `web-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      let image = editingPost ? editingPost.image : null;
+      let oldImage = null;
 
-      await ghPut(cfg, imgPath, bytesToB64(bytes), `post: ${country} の写真`);
+      if (pickedFile) {
+        setStatus((await looksLikeHeic(pickedFile)) ? "画像を変換中…（初回は少し時間がかかります）" : "画像を処理中…");
+        submitBtn.textContent = "処理中…";
+        const bytes = await resizeImage(pickedFile);
+        setStatus("写真をアップロード中…");
+        const imgPath = `images/${id}-${Date.now()}.jpg`;
+        await ghPut(cfg, imgPath, bytesToB64(bytes), `photo: ${country}`);
+        if (editingPost && editingPost.image) oldImage = editingPost.image;
+        image = imgPath;
+      }
 
+      setStatus(editingPost ? "更新中…" : "投稿を保存中…");
+      submitBtn.textContent = editingPost ? "更新中…" : "保存中…";
       const post = {
         id,
         code,
         country,
         dish: $("#pf-dish").value.trim(),
         comment: $("#pf-comment").value.trim(),
-        image: imgPath,
-        date: new Date().toISOString(),
-        source: "web",
+        image,
+        date: editingPost ? editingPost.date : new Date().toISOString(),
+        source: editingPost ? (editingPost.source || "web") : "web",
       };
-      await appendPost(cfg, post);
+      await upsertPost(cfg, post);
 
-      saveCfg(cfg); // 成功した設定を保存
-      window.WFM.addPostLive(post); // その場で地図・フィードに反映
-      toast(`${window.WFM.flagEmoji(code)} ${country} を投稿しました（数十秒で公開版にも反映）`);
-      resetForm();
+      // 差し替え前の画像を後始末（best-effort）
+      if (oldImage && oldImage.startsWith("images/")) {
+        try { await ghDelete(cfg, oldImage); } catch (e) { /* ignore */ }
+      }
+
+      if (editingPost) window.WFM.updatePostLive(post);
+      else window.WFM.addPostLive(post);
+
+      setStatus("");
+      toast(`${window.WFM.flagEmoji(code)} ${country} を${editingPost ? "更新" : "投稿"}しました`);
+      // 国別モーダルが開いていたら閉じる
+      const cm = document.getElementById("modal");
+      if (cm) { cm.hidden = true; }
+      editingPost = null;
+      resetFormFields();
       closeModal();
     } catch (e) {
       console.error(e);
-      let msg;
-      if (e && e.code === "IMAGE_DECODE") {
-        msg = "画像を読み込めませんでした。別の写真か、JPEG/PNG でお試しください（大きすぎる画像も失敗することがあります）。";
-      } else {
-        let hint = "";
-        if (e.status === 401 || e.status === 403) hint = "（トークンの権限を確認してください）";
-        if (e.status === 404) hint = "（ユーザー名・リポジトリ名を確認してください）";
-        msg = "投稿に失敗: " + String(e.message || e).slice(0, 70) + hint;
-      }
-      toast(msg);
+      setStatus("");
+      toast((editingPost ? "更新" : "投稿") + "に失敗: " + errMsg(e));
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = "投稿する";
+      submitBtn.textContent = origLabel;
     }
   }
 
-  function resetForm() {
-    pickedFile = null;
-    $("#post-form").reset();
-    $("#pf-drop").innerHTML = "<span>📷 写真を選ぶ</span>";
-    $("#pf-resolved").textContent = "";
+  async function editPost(post) { openPostModal(post); }
+
+  async function deletePost(post) {
+    if (!post) return;
+    if (!confirm(`「${post.country}${post.dish ? " / " + post.dish : ""}」を削除しますか？`)) return;
+    const cfg = requireCfg();
+    if (!cfg) return;
+    toast("削除中…");
+    try {
+      await removePost(cfg, post.id);
+      if (post.image && String(post.image).startsWith("images/")) {
+        try { await ghDelete(cfg, post.image); } catch (e) { /* ignore */ }
+      }
+      window.WFM.removePostLive(post.id);
+      const cm = document.getElementById("modal");
+      if (cm) { cm.hidden = true; document.body.style.overflow = ""; }
+      toast("削除しました");
+    } catch (e) {
+      console.error(e);
+      toast("削除に失敗: " + errMsg(e));
+    }
   }
 
-  document.addEventListener("DOMContentLoaded", buildUI);
+  // ---- 初期化 --------------------------------------------------------
+  function init() {
+    // URL に #admin があれば管理者モードを有効化してハッシュを消す
+    if (/admin/i.test(location.hash)) {
+      enableAdmin();
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* noop */ }
+    }
+    window.WFMPost = { isAdmin, editPost, deletePost };
+    if (isAdmin()) buildUI();
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
 })();
