@@ -1,6 +1,7 @@
-/* 世界食べ歩き地図 — フロントエンド
+/* 世界料理制覇マップ — フロントエンド
  * data/countries.json (ISO2 -> {en, ja, un, ...}) と
  * data/posts.json (投稿配列) を読み、choropleth 世界地図を描画する。
+ * 投稿モジュール(post.js)向けに window.WFM を公開する。
  */
 (function () {
   "use strict";
@@ -10,23 +11,18 @@
 
   const $ = (sel) => document.querySelector(sel);
 
-  // 描画に使うデータをモジュールスコープに保持 (テーマ切替時の再描画で使う)
-  const state = { byCode: new Map(), countries: {} };
+  // 描画に使うデータをモジュールスコープに保持
+  const state = { posts: [], byCode: new Map(), countries: {} };
   let mapInstance = null;
 
   // ---- ユーティリティ -------------------------------------------------
-  // ISO2 コード -> 国旗絵文字 (地域指標シンボル)
   function flagEmoji(code) {
     if (!code || code.length !== 2) return "🍽️";
     const cc = code.toUpperCase();
     if (!/^[A-Z]{2}$/.test(cc)) return "🍽️";
-    return String.fromCodePoint(
-      0x1f1e6 + cc.charCodeAt(0) - 65,
-      0x1f1e6 + cc.charCodeAt(1) - 65
-    );
+    return String.fromCodePoint(0x1f1e6 + cc.charCodeAt(0) - 65, 0x1f1e6 + cc.charCodeAt(1) - 65);
   }
 
-  // 訪問数に応じた塗り色 (多く食べた国ほど濃い)
   function fillFor(n) {
     return n >= 5 ? "#b8340a" : n >= 3 ? "#d94e12" : n >= 2 ? "#e8622a" : "#f2954a";
   }
@@ -47,12 +43,10 @@
 
   function getCSS(varName) {
     return (
-      getComputedStyle(document.documentElement).getPropertyValue(varName).trim() ||
-      "#ece3d6"
+      getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || "#ece3d6"
     );
   }
 
-  // 画像 or 絵文字プレースホルダ
   function mediaHTML(post, cls) {
     if (post.image) {
       return `<img class="${cls}" src="${esc(post.image)}" alt="${esc(post.country)}の料理" loading="lazy" />`;
@@ -63,6 +57,32 @@
   function nameOf(code) {
     const c = state.countries[code];
     return c ? c.ja : code;
+  }
+
+  // ---- 国名リゾルバ（post.js からも利用） -----------------------------
+  let resolverIndex = null;
+  function buildResolver() {
+    resolverIndex = new Map();
+    const put = (k, code) => {
+      const key = String(k || "").trim().toLowerCase();
+      if (key && !resolverIndex.has(key)) resolverIndex.set(key, code);
+    };
+    for (const [code, c] of Object.entries(state.countries)) {
+      put(code, code);
+      put(c.en, code);
+      put(c.ja, code);
+      for (const a of c.alt || []) put(a, code);
+    }
+    const manual = { 英国: "GB", 米国: "US", 韓国: "KR", 台湾: "TW", 香港: "HK", uk: "GB", usa: "US", uae: "AE" };
+    for (const [k, code] of Object.entries(manual)) put(k, code);
+  }
+  function resolveCountry(raw) {
+    if (!resolverIndex) buildResolver();
+    if (!raw) return null;
+    let s = String(raw).trim().toLowerCase();
+    if (resolverIndex.has(s)) return resolverIndex.get(s);
+    s = s.replace(/[#＃「」『』()（）:：、。・\s]+/g, "");
+    return resolverIndex.has(s) ? resolverIndex.get(s) : null;
   }
 
   // ---- データ読込 -----------------------------------------------------
@@ -84,30 +104,56 @@
       loadJSON("data/posts.json", []),
     ]);
     state.countries = countries;
+    state.posts = Array.isArray(posts) ? posts : [];
+    buildResolver();
 
-    // コード -> 投稿[] にグルーピング (code が解決済みのものだけ地図対象)
-    const byCode = new Map();
-    for (const p of posts) {
-      if (!p.code) continue;
-      const code = p.code.toUpperCase();
-      if (!byCode.has(code)) byCode.set(code, []);
-      byCode.get(code).push(p);
-    }
-    state.byCode = byCode;
-
-    renderStats(byCode, posts);
-    renderMap();
-    setupSearch();
-    renderFeed(posts);
-    renderFooter(posts);
+    setupSearch(); // イベント配線（1回だけ）
     setupModal();
     setupTheme();
+    renderAll();
+
+    // 投稿モジュール(post.js)向けの公開API
+    window.WFM = {
+      getCountries: () => state.countries,
+      resolveCountry,
+      flagEmoji,
+      toast,
+      hasPostId: (id) => state.posts.some((p) => p.id === id),
+      addPostLive(post) {
+        if (!post) return;
+        if (post.id && state.posts.some((p) => p.id === post.id)) return;
+        state.posts.push(post);
+        renderAll();
+      },
+    };
+    document.dispatchEvent(new Event("wfm:ready"));
+  }
+
+  function computeByCode() {
+    const m = new Map();
+    for (const p of state.posts) {
+      if (!p.code) continue;
+      const code = String(p.code).toUpperCase();
+      if (!m.has(code)) m.set(code, []);
+      m.get(code).push(p);
+    }
+    state.byCode = m;
+  }
+
+  // データ変更時にまとめて再描画
+  function renderAll() {
+    computeByCode();
+    renderStats();
+    renderMap();
+    renderFeed();
+    renderSearchResults();
+    renderFooter();
   }
 
   // ---- 統計 -----------------------------------------------------------
-  function renderStats(byCode, posts) {
-    const nCountries = byCode.size;
-    const nDishes = posts.length;
+  function renderStats() {
+    const nCountries = state.byCode.size;
+    const nDishes = state.posts.length;
     const pct = Math.round((nCountries / WORLD_COUNT) * 1000) / 10;
     $("#stat-countries").textContent = nCountries;
     $("#stat-percent").textContent = pct + "%";
@@ -119,8 +165,14 @@
 
   // ---- 地図 -----------------------------------------------------------
   function renderMap() {
-    const byCode = state.byCode;
     const mapEl = document.getElementById("map");
+    if (mapInstance && mapInstance.destroy) {
+      try { mapInstance.destroy(); } catch (e) { /* noop */ }
+    }
+    mapInstance = null;
+    mapEl.innerHTML = "";
+
+    const byCode = state.byCode;
     if (typeof jsVectorMap === "undefined") {
       mapEl.innerHTML = '<p class="map-fallback">地図ライブラリを読み込めませんでした。</p>';
       return;
@@ -145,10 +197,7 @@
           const list = byCode.get(code);
           const name = nameOf(code);
           if (list) {
-            tooltip.text(
-              `<strong>${flagEmoji(code)} ${esc(name)}</strong><br>食べた・${list.length}品`,
-              true
-            );
+            tooltip.text(`<strong>${flagEmoji(code)} ${esc(name)}</strong><br>食べた・${list.length}品`, true);
           } else {
             tooltip.text(`${esc(name)}<br><span style="opacity:.7">未食</span>`, true);
           }
@@ -172,18 +221,12 @@
     }
   }
 
-  function rerenderMap() {
-    if (mapInstance && mapInstance.destroy) mapInstance.destroy();
-    document.getElementById("map").innerHTML = "";
-    mapInstance = null;
-    renderMap();
-  }
-
   // ---- フィード -------------------------------------------------------
-  function renderFeed(posts) {
+  function renderFeed() {
     const feed = $("#feed");
+    const posts = state.posts;
     if (!posts.length) {
-      feed.innerHTML = `<p class="feed-empty">まだ投稿がありません。Discord に写真を投稿すると、ここと地図に反映されます。</p>`;
+      feed.innerHTML = `<p class="feed-empty">まだ投稿がありません。右下の「＋ 投稿」または Discord から追加できます。</p>`;
       return;
     }
     const sorted = [...posts].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -212,7 +255,7 @@
       const open = () => {
         const code = (el.getAttribute("data-code") || "").toUpperCase();
         if (!code) return;
-        const list = posts.filter((p) => (p.code || "").toUpperCase() === code);
+        const list = state.posts.filter((p) => (p.code || "").toUpperCase() === code);
         const nm = list[0]?.country || nameOf(code);
         if (list.length) openModal(code, list, nm);
       };
@@ -224,7 +267,7 @@
   }
 
   // ---- 国さがし（検索） ----------------------------------------------
-  const search = { q: "", filter: "all", rows: [] };
+  const search = { q: "", filter: "all" };
 
   function buildCountryRows() {
     const rows = [];
@@ -255,9 +298,11 @@
   function renderSearchResults() {
     const resultsEl = $("#search-results");
     const summaryEl = $("#search-summary");
+    if (!resultsEl || !summaryEl) return;
+    const allRows = buildCountryRows();
     const q = search.q.trim().toLowerCase();
 
-    let rows = search.rows;
+    let rows = allRows;
     if (search.filter === "eaten") rows = rows.filter((r) => r.count > 0);
     else if (search.filter === "todo") rows = rows.filter((r) => r.count === 0 && r.un);
 
@@ -272,7 +317,7 @@
     }
     rows = rows.slice().sort((a, b) => b.count - a.count || a.ja.localeCompare(b.ja, "ja"));
 
-    const eatenTotal = search.rows.filter((r) => r.count > 0).length;
+    const eatenTotal = allRows.filter((r) => r.count > 0).length;
     summaryEl.textContent = `食べた ${eatenTotal} カ国 ／ 全 ${WORLD_COUNT} カ国`;
 
     // 既定表示（未検索・すべて）は「食べた国」だけ。250件のダンプを避ける
@@ -309,8 +354,8 @@
     });
   }
 
+  let searchWired = false;
   function setupSearch() {
-    search.rows = buildCountryRows();
     const input = $("#country-search");
     const chips = $("#filter-chips");
 
@@ -325,6 +370,8 @@
       );
     applyChipUI();
 
+    if (searchWired) return;
+    searchWired = true;
     input.addEventListener("input", () => { search.q = input.value; renderSearchResults(); });
     chips.querySelectorAll(".chip").forEach((chip) => {
       chip.addEventListener("click", () => {
@@ -333,7 +380,6 @@
         renderSearchResults();
       });
     });
-    renderSearchResults();
   }
 
   // 地図上で該当国を一時的にハイライト（点滅）し、地図までスクロール
@@ -403,8 +449,8 @@
   }
 
   // ---- フッター / テーマ ---------------------------------------------
-  function renderFooter(posts) {
-    const latest = posts.map((p) => p.date).filter(Boolean).sort().pop();
+  function renderFooter() {
+    const latest = state.posts.map((p) => p.date).filter(Boolean).sort().pop();
     $("#footer-updated").textContent = latest ? `最終更新: ${fmtDate(latest)}` : "世界料理制覇マップ";
   }
 
@@ -417,13 +463,11 @@
     themeWired = true;
     $("#theme-toggle").addEventListener("click", () => {
       const cur = document.documentElement.getAttribute("data-theme");
-      const isDark = cur
-        ? cur === "dark"
-        : window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const isDark = cur ? cur === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
       const next = isDark ? "light" : "dark";
       document.documentElement.setAttribute("data-theme", next);
       localStorage.setItem(KEY, next);
-      rerenderMap(); // 初期塗り色(CSS変数)を反映
+      renderMap(); // 初期塗り色(CSS変数)を反映
     });
   }
 
