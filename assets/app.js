@@ -23,8 +23,9 @@
     return String.fromCodePoint(0x1f1e6 + cc.charCodeAt(0) - 65, 0x1f1e6 + cc.charCodeAt(1) - 65);
   }
 
+  // 訪問数に応じた塗り色 (多く食べた国ほど濃い緑)
   function fillFor(n) {
-    return n >= 5 ? "#b8340a" : n >= 3 ? "#d94e12" : n >= 2 ? "#e8622a" : "#f2954a";
+    return n >= 5 ? "#3f6b4d" : n >= 3 ? "#548060" : n >= 2 ? "#6f9b73" : "#9cbf93";
   }
 
   function fmtDate(iso) {
@@ -390,8 +391,8 @@
     document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "center" });
     const list = state.byCode.get(code);
     const resting = list ? fillFor(list.length) : getCSS("--map-unvisited");
-    el.setStyle("fill", "#ffcf33");
-    el.setStyle("stroke", "#b8340a");
+    el.setStyle("fill", "#dbb15a");
+    el.setStyle("stroke", "#2f5a3d");
     el.setStyle("stroke-width", 1.6);
     setTimeout(() => {
       el.setStyle("fill", resting);
