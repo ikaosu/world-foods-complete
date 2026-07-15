@@ -57,14 +57,22 @@
       document.head.appendChild(s);
     });
   }
-  function isHeic(file) {
-    return /image\/hei[cf]/i.test(file.type || "") || /\.(heic|heif)$/i.test(file.name || "");
+  // 拡張子/MIME だけでなく中身のマジックバイトでも HEIC/HEIF を判定
+  async function looksLikeHeic(file) {
+    if (/image\/hei[cf]/i.test(file.type || "")) return true;
+    if (/\.(heic|heif)$/i.test(file.name || "")) return true;
+    try {
+      const b = new Uint8Array(await file.slice(0, 32).arrayBuffer());
+      if (b.length >= 12 && String.fromCharCode(b[4], b[5], b[6], b[7]) === "ftyp") {
+        const brands = String.fromCharCode.apply(null, b.subarray(8, 32));
+        if (/heic|heix|hevc|heim|heis|hevm|hevs|mif1|msf1|heif/i.test(brands)) return true;
+      }
+    } catch (e) { /* ignore */ }
+    return false;
   }
-  // iPhone等のHEICはブラウザで表示できないため JPEG に変換する
-  async function toDecodableBlob(file) {
-    if (!isHeic(file)) return file;
+  async function heicToJpeg(file) {
     await loadScriptOnce("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js", "heic2any");
-    const out = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+    const out = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.92 });
     return Array.isArray(out) ? out[0] : out;
   }
   async function decodeImage(blob) {
@@ -73,21 +81,33 @@
     return await new Promise((resolve, reject) => {
       const img = new Image();
       const url = URL.createObjectURL(blob);
+      img.decoding = "async";
       img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
       img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("img decode failed")); };
       img.src = url;
     });
   }
+  // どんなスマホ写真でも通す: 判定→変換→デコード、失敗しても変換して再挑戦
   async function resizeImage(file, maxDim = 1600, quality = 0.85) {
-    let src;
+    let blob = file;
+    let src = null;
+    if (await looksLikeHeic(file)) {
+      try { blob = await heicToJpeg(file); } catch (e) { blob = file; /* 後段で再挑戦 */ }
+    }
     try {
-      const blob = await toDecodableBlob(file);
       src = await decodeImage(blob);
     } catch (e) {
-      throw Object.assign(new Error("image decode failed: " + (e.message || e)), { code: "IMAGE_DECODE" });
+      // 未検出の HEIC/HEIF かもしれないので変換して最後にもう一度
+      if (blob === file) {
+        try { blob = await heicToJpeg(file); src = await decodeImage(blob); }
+        catch (e2) { throw Object.assign(new Error("decode failed: " + (e2.message || e2)), { code: "IMAGE_DECODE" }); }
+      } else {
+        throw Object.assign(new Error("decode failed: " + (e.message || e)), { code: "IMAGE_DECODE" });
+      }
     }
     let width = src.naturalWidth || src.width;
     let height = src.naturalHeight || src.height;
+    if (!width || !height) throw Object.assign(new Error("no dimensions"), { code: "IMAGE_DECODE" });
     const scale = Math.min(1, maxDim / Math.max(width, height));
     width = Math.max(1, Math.round(width * scale));
     height = Math.max(1, Math.round(height * scale));
