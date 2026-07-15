@@ -46,24 +46,58 @@
   const utf8ToB64 = (str) => bytesToB64(new TextEncoder().encode(str));
   const b64ToUtf8 = (b64) => new TextDecoder().decode(b64ToBytes(b64));
 
-  // ---- 画像リサイズ ---------------------------------------------------
+  // ---- 画像デコード & リサイズ ---------------------------------------
+  function loadScriptOnce(src, globalName) {
+    if (window[globalName]) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("script load failed: " + src));
+      document.head.appendChild(s);
+    });
+  }
+  function isHeic(file) {
+    return /image\/hei[cf]/i.test(file.type || "") || /\.(heic|heif)$/i.test(file.name || "");
+  }
+  // iPhone等のHEICはブラウザで表示できないため JPEG に変換する
+  async function toDecodableBlob(file) {
+    if (!isHeic(file)) return file;
+    await loadScriptOnce("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js", "heic2any");
+    const out = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+    return Array.isArray(out) ? out[0] : out;
+  }
+  async function decodeImage(blob) {
+    try { return await createImageBitmap(blob, { imageOrientation: "from-image" }); } catch (e) { /* next */ }
+    try { return await createImageBitmap(blob); } catch (e) { /* next */ }
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(blob);
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("img decode failed")); };
+      img.src = url;
+    });
+  }
   async function resizeImage(file, maxDim = 1600, quality = 0.85) {
-    let bitmap;
+    let src;
     try {
-      bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      const blob = await toDecodableBlob(file);
+      src = await decodeImage(blob);
     } catch (e) {
-      bitmap = await createImageBitmap(file);
+      throw Object.assign(new Error("image decode failed: " + (e.message || e)), { code: "IMAGE_DECODE" });
     }
-    let { width, height } = bitmap;
+    let width = src.naturalWidth || src.width;
+    let height = src.naturalHeight || src.height;
     const scale = Math.min(1, maxDim / Math.max(width, height));
     width = Math.max(1, Math.round(width * scale));
     height = Math.max(1, Math.round(height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
-    const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", quality));
-    return new Uint8Array(await blob.arrayBuffer());
+    canvas.getContext("2d").drawImage(src, 0, 0, width, height);
+    const outBlob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", quality));
+    if (!outBlob) throw Object.assign(new Error("encode failed"), { code: "IMAGE_DECODE" });
+    return new Uint8Array(await outBlob.arrayBuffer());
   }
 
   // ---- GitHub API ----------------------------------------------------
@@ -195,10 +229,16 @@
     drop.addEventListener("click", () => photoInput.click());
     photoInput.addEventListener("change", () => {
       pickedFile = photoInput.files[0] || null;
-      if (pickedFile) {
-        const url = URL.createObjectURL(pickedFile);
-        drop.innerHTML = `<img src="${url}" alt="プレビュー" />`;
-      }
+      if (!pickedFile) return;
+      const url = URL.createObjectURL(pickedFile);
+      const img = new Image();
+      img.alt = "プレビュー";
+      img.onload = () => { drop.innerHTML = ""; drop.appendChild(img); };
+      img.onerror = () => {
+        // HEIC等でプレビューできない場合もファイル自体は投稿時に変換される
+        drop.textContent = "✓ 選択済み（投稿時に変換）: " + pickedFile.name;
+      };
+      img.src = url;
     });
 
     // 国名の解決プレビュー
@@ -295,10 +335,16 @@
       closeModal();
     } catch (e) {
       console.error(e);
-      let hint = "";
-      if (e.status === 401 || e.status === 403) hint = "（トークンの権限を確認してください）";
-      if (e.status === 404) hint = "（ユーザー名・リポジトリ名を確認してください）";
-      toast("投稿に失敗: " + String(e.message || e).slice(0, 70) + hint);
+      let msg;
+      if (e && e.code === "IMAGE_DECODE") {
+        msg = "画像を読み込めませんでした。別の写真か、JPEG/PNG でお試しください（大きすぎる画像も失敗することがあります）。";
+      } else {
+        let hint = "";
+        if (e.status === 401 || e.status === 403) hint = "（トークンの権限を確認してください）";
+        if (e.status === 404) hint = "（ユーザー名・リポジトリ名を確認してください）";
+        msg = "投稿に失敗: " + String(e.message || e).slice(0, 70) + hint;
+      }
+      toast(msg);
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = "投稿する";
