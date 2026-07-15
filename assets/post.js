@@ -236,6 +236,9 @@
   // ---- UI 構築（管理者のみ） -----------------------------------------
   let pickedFile = null;
   let editingPost = null;
+  // 写真を選んだ瞬間から裏で変換・リサイズを始める(入力中に処理を終わらせる)
+  let processedPromise = null;
+  let processedBytes = null;
 
   function buildUI() {
     const fab = document.createElement("button");
@@ -316,8 +319,26 @@
       const img = new Image();
       img.alt = "プレビュー";
       img.onload = () => { drop.innerHTML = ""; drop.appendChild(img); };
-      img.onerror = () => { drop.textContent = "✓ 選択済み（投稿時に変換）: " + pickedFile.name; };
+      img.onerror = () => { drop.textContent = "✓ 選択済み: " + pickedFile.name; };
       img.src = url;
+
+      // 先行処理: 入力している間に変換・リサイズを済ませる
+      // (クラウドにしか実体がない写真などで読めない場合に固まらないようタイムアウト付き)
+      const f = pickedFile;
+      processedBytes = null;
+      setStatus("写真を準備中…（そのまま入力を続けてOK）");
+      processedPromise = withTimeout(resizeImage(f), 120000, "写真の準備");
+      processedPromise
+        .then((bytes) => {
+          if (pickedFile !== f) return; // 別の写真に差し替え済みなら無視
+          processedBytes = bytes;
+          setStatus("✓ 写真の準備ができました");
+        })
+        .catch(() => {
+          if (pickedFile !== f) return;
+          setStatus("⚠ この写真を読み込めません。別の写真を選ぶか、そのまま投稿で再試行できます。");
+          processedPromise = null; // 投稿時に最初からやり直す
+        });
     });
 
     const countryInput = $("#pf-country");
@@ -356,6 +377,8 @@
 
   function resetFormFields() {
     pickedFile = null;
+    processedPromise = null;
+    processedBytes = null;
     $("#pf-country").value = "";
     $("#pf-dish").value = "";
     $("#pf-comment").value = "";
@@ -443,9 +466,13 @@
       let imageLocal = null;
 
       if (pickedFile) {
-        setStatus((await looksLikeHeic(pickedFile)) ? "画像を変換中…（初回は少し時間がかかります）" : "画像を処理中…");
-        submitBtn.textContent = "処理中…";
-        const bytes = await resizeImage(pickedFile);
+        // 選択時に始めた先行処理を使う(済んでいれば待ちゼロ)
+        let bytes = processedBytes;
+        if (!bytes) {
+          setStatus((await looksLikeHeic(pickedFile)) ? "画像を変換中…（初回は少し時間がかかります）" : "画像を処理中…");
+          submitBtn.textContent = "処理中…";
+          bytes = await (processedPromise || resizeImage(pickedFile));
+        }
         setStatus("写真をアップロード中…");
         const imgPath = `images/${id}-${Date.now()}.jpg`;
         const putRes = await ghPut(cfg, imgPath, bytesToB64(bytes), `photo: ${country}`);
