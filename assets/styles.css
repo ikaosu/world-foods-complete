@@ -106,6 +106,15 @@ body {
   box-shadow: var(--shadow);
   overflow: hidden;
 }
+/* スマホ縦画面: 世界地図(横長 約2:1)の比率に高さを合わせ、上下の余白を消す */
+@media (max-width: 640px) {
+  #map {
+    height: auto;
+    aspect-ratio: 900 / 500;
+    min-height: 200px;
+    max-height: 55vh;
+  }
+}
 .map-fallback { padding: 40px; text-align: center; color: var(--ink-soft); }
 .jvm-tooltip {
   border-radius: 10px !important;
