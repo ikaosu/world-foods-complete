@@ -264,6 +264,13 @@ body {
 .pf-status { font-size: .82rem; color: var(--brand-deep); min-height: 1.1em; font-weight: 700; }
 .pf-danger { color: #a83232 !important; text-align: left; margin-top: 4px; }
 
+/* 反映待ちバッジ */
+.pend-badge {
+  display: inline-block; font-size: .68rem; font-weight: 700; white-space: nowrap;
+  color: var(--brand-deep); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; vertical-align: 1px;
+}
+
 /* 投稿の編集・削除（管理者） */
 .mpost-actions { display: flex; gap: 8px; margin-top: 4px; }
 .mpost-btn {

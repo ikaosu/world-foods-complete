@@ -49,8 +49,10 @@
   }
 
   function mediaHTML(post, cls) {
-    if (post.image) {
-      return `<img class="${cls}" src="${esc(post.image)}" alt="${esc(post.country)}の料理" loading="lazy" />`;
+    // 反映待ちの投稿は、Pages 配信前でも見えるソース(セッション内blob→raw URL)を優先
+    const src = post.imageLocal || (post.pending && post.imageRemote) || post.image;
+    if (src) {
+      return `<img class="${cls}" src="${esc(src)}" alt="${esc(post.country)}の料理" loading="lazy" />`;
     }
     return `<div class="card-ph">${flagEmoji(post.code)}</div>`;
   }
@@ -98,6 +100,38 @@
     }
   }
 
+  // ---- 反映待ち投稿（GitHub Pages のデプロイラグ対策） -----------------
+  // 投稿/編集/削除の直後は公開サイトへの反映に1〜2分かかる。その間に再読込
+  // しても消えないよう、post.js が localStorage("wfm-pending") に控えを残す。
+  // 公開版に反映されたのを確認できた控えはここで破棄する。
+  const PENDING_KEY = "wfm-pending";
+  function mergePending(posts) {
+    let pending = [];
+    try { pending = JSON.parse(localStorage.getItem(PENDING_KEY) || "[]"); } catch (e) { /* noop */ }
+    if (!Array.isArray(pending) || !pending.length) return posts;
+    const keep = [];
+    const DAY = 24 * 3600 * 1000;
+    for (const pd of pending) {
+      if (!pd || Date.now() - (pd.savedAt || 0) > DAY) continue; // 期限切れは破棄
+      if (pd.type === "del") {
+        if (posts.some((p) => p.id === pd.id)) {
+          posts = posts.filter((p) => p.id !== pd.id); // まだ残っている→隠す
+          keep.push(pd);
+        }
+        // 公開版からも消えていれば控え不要
+      } else if (pd.post) {
+        const f = posts.find((p) => p.id === pd.post.id);
+        if (f && f.rev && f.rev === pd.post.rev) continue; // 反映済み→控え破棄
+        const merged = Object.assign({}, pd.post, { pending: true, imageRemote: pd.imageRemote });
+        const i = posts.findIndex((p) => p.id === pd.post.id);
+        if (i >= 0) posts[i] = merged; else posts.push(merged);
+        keep.push(pd);
+      }
+    }
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify(keep)); } catch (e) { /* noop */ }
+    return posts;
+  }
+
   // ---- メイン ---------------------------------------------------------
   async function main() {
     const [countries, posts] = await Promise.all([
@@ -105,7 +139,7 @@
       loadJSON("data/posts.json", []),
     ]);
     state.countries = countries;
-    state.posts = Array.isArray(posts) ? posts : [];
+    state.posts = mergePending(Array.isArray(posts) ? posts : []);
     buildResolver();
 
     setupSearch(); // イベント配線（1回だけ）
@@ -249,9 +283,10 @@
         const name = p.country || nameOf(p.code);
         const flag = flagEmoji(p.code);
         const title = p.dish ? esc(p.dish) : `${flag} ${esc(name)}`;
-        const meta = p.dish
+        const pend = p.pending ? ` <span class="pend-badge" title="公開サイトへ反映中(1〜2分)">⏳反映中</span>` : "";
+        const meta = (p.dish
           ? `<span class="card-flag">${flag}</span>${esc(name)} ・ ${fmtDate(p.date)}`
-          : fmtDate(p.date);
+          : fmtDate(p.date)) + pend;
         return `
         <article class="card" data-code="${esc(p.code || "")}" tabindex="0">
           ${mediaHTML(p, "card-img")}
@@ -442,7 +477,7 @@
         ${mediaHTML(p, "")}
         ${p.dish ? `<div class="mpost-dish">${esc(p.dish)}</div>` : ""}
         ${p.comment ? `<p class="mpost-comment">${esc(p.comment)}</p>` : ""}
-        <div class="mpost-date">${fmtDate(p.date)}</div>
+        <div class="mpost-date">${fmtDate(p.date)}${p.pending ? ` <span class="pend-badge" title="公開サイトへ反映中(1〜2分)">⏳反映中</span>` : ""}</div>
         ${admin ? `<div class="mpost-actions"><button type="button" class="mpost-btn mpost-edit">編集</button><button type="button" class="mpost-btn mpost-del">削除</button></div>` : ""}
       </div>`
       )

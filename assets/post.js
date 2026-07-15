@@ -33,6 +33,26 @@
   }
   function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
 
+  // ---- 反映待ち控え（Pages デプロイラグ中も投稿が消えないように） -----
+  const PENDING_KEY = "wfm-pending";
+  function loadPending() {
+    try { const a = JSON.parse(localStorage.getItem(PENDING_KEY) || "[]"); return Array.isArray(a) ? a : []; }
+    catch (e) { return []; }
+  }
+  function savePending(arr) {
+    try { localStorage.setItem(PENDING_KEY, JSON.stringify(arr)); } catch (e) { /* noop */ }
+  }
+  function notePendingUpsert(post, imageRemote) {
+    const arr = loadPending().filter((e) => !(e.post && e.post.id === post.id) && e.id !== post.id);
+    arr.push({ type: "add", post, imageRemote, savedAt: Date.now() });
+    savePending(arr);
+  }
+  function notePendingDelete(id) {
+    const arr = loadPending().filter((e) => !(e.post && e.post.id === id) && e.id !== id);
+    arr.push({ type: "del", id, savedAt: Date.now() });
+    savePending(arr);
+  }
+
   // ---- base64 / UTF-8 ------------------------------------------------
   function bytesToB64(bytes) {
     let bin = "";
@@ -419,6 +439,8 @@
       const id = editingPost ? editingPost.id : `web-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
       let image = editingPost ? editingPost.image : null;
       let oldImage = null;
+      let imageRemote = editingPost ? editingPost.imageRemote : null;
+      let imageLocal = null;
 
       if (pickedFile) {
         setStatus((await looksLikeHeic(pickedFile)) ? "画像を変換中…（初回は少し時間がかかります）" : "画像を処理中…");
@@ -426,9 +448,13 @@
         const bytes = await resizeImage(pickedFile);
         setStatus("写真をアップロード中…");
         const imgPath = `images/${id}-${Date.now()}.jpg`;
-        await ghPut(cfg, imgPath, bytesToB64(bytes), `photo: ${country}`);
+        const putRes = await ghPut(cfg, imgPath, bytesToB64(bytes), `photo: ${country}`);
         if (editingPost && editingPost.image) oldImage = editingPost.image;
         image = imgPath;
+        // Pages 反映前でも表示できるソースを控えておく
+        const sha = putRes && putRes.commit && putRes.commit.sha;
+        imageRemote = `https://raw.githubusercontent.com/${cfg.owner}/${cfg.repo}/${sha || cfg.branch}/${imgPath}`;
+        imageLocal = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
       }
 
       setStatus(editingPost ? "更新中…" : "投稿を保存中…");
@@ -442,6 +468,7 @@
         image,
         date: editingPost ? editingPost.date : new Date().toISOString(),
         source: editingPost ? (editingPost.source || "web") : "web",
+        rev: Date.now(), // 反映確認用のリビジョン
       };
       await upsertPost(cfg, post);
 
@@ -450,11 +477,14 @@
         try { await ghDelete(cfg, oldImage); } catch (e) { /* ignore */ }
       }
 
-      if (editingPost) window.WFM.updatePostLive(post);
-      else window.WFM.addPostLive(post);
+      // 反映待ち控えを保存し、画面には即時ソース付きで反映
+      notePendingUpsert(post, imageRemote);
+      const livePost = Object.assign({}, post, { pending: true, imageRemote, imageLocal });
+      if (editingPost) window.WFM.updatePostLive(livePost);
+      else window.WFM.addPostLive(livePost);
 
       setStatus("");
-      toast(`${window.WFM.flagEmoji(code)} ${country} を${editingPost ? "更新" : "投稿"}しました`);
+      toast(`${window.WFM.flagEmoji(code)} ${country} を${editingPost ? "更新" : "投稿"}しました（サイト全体への反映は1〜2分）`);
       // 国別モーダルが開いていたら閉じる
       const cm = document.getElementById("modal");
       if (cm) { cm.hidden = true; }
@@ -484,6 +514,7 @@
       if (post.image && String(post.image).startsWith("images/")) {
         try { await ghDelete(cfg, post.image); } catch (e) { /* ignore */ }
       }
+      notePendingDelete(post.id); // 反映ラグ中の再読込でも復活しないように
       window.WFM.removePostLive(post.id);
       const cm = document.getElementById("modal");
       if (cm) { cm.hidden = true; document.body.style.overflow = ""; }
